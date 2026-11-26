@@ -1,5 +1,5 @@
 // Chỉnh Xinh — lưu đệm để mở nhanh & dùng khi mất mạng
-const V = "chinh-xinh-v3";
+const V = "chinh-xinh-v4";
 const SHELL = ["./", "index.html", "style.css", "js/app.js", "js/engine.js", "js/face.js", "js/layers.js", "js/stickers.js", "js/heal.js", "manifest.webmanifest", "icons/icon-192.png", "icons/apple-touch-icon.png"];
 const CDN = ["cdn.jsdelivr.net", "storage.googleapis.com", "unpkg.com"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(V).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
