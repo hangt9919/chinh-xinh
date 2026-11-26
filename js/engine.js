@@ -331,6 +331,13 @@ export class Engine {
     this.dirty1 = true;
   }
 
+  // ảnh gốc bị sửa (xoá mụn) -> nạp lại texture và lớp mờ
+  updateSource(canvas) {
+    this.texSrc = this._texSource(canvas, this.texSrc);
+    this.buildBlur(this.blurSigma);
+    this.dirty1 = true;
+  }
+
   setSeg(data, w, h) {
     const gl = this.gl;
     gl.bindTexture(gl.TEXTURE_2D, this.texSeg);

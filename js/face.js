@@ -57,6 +57,54 @@ export async function segmentHair(src) {
   } finally { r.close && r.close(); }
 }
 
+// ---------- cắt người / chạm chọn vật ----------
+const PERSON_MODEL = "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite";
+const TOUCH_MODEL = "https://storage.googleapis.com/mediapipe-models/interactive_segmenter/magic_touch/float32/latest/magic_touch.tflite";
+let personSeg, touchSeg;
+
+function maskOut(r, pick) {
+  try {
+    const masks = r.confidenceMasks;
+    const m = pick(masks);
+    return { data: m.getAsFloat32Array().slice(), w: m.width, h: m.height };
+  } finally { r.close && r.close(); }
+}
+
+// trả về {data: Float32Array 0..1, w, h} — độ chắc chắn là người
+export async function segmentPerson(src) {
+  await loadVision();
+  if (!personSeg) {
+    personSeg = await vision.ImageSegmenter.createFromOptions(fileset, {
+      baseOptions: { modelAssetPath: PERSON_MODEL, delegate: "CPU" },
+      runningMode: "IMAGE", outputCategoryMask: false, outputConfidenceMasks: true,
+    });
+  }
+  return maskOut(personSeg.segment(src), ms => ms[ms.length - 1]);
+}
+
+// chạm vào điểm (x,y chuẩn hoá 0..1) -> vùng của vật tại điểm đó
+export async function segmentAt(src, x, y) {
+  await loadVision();
+  if (!touchSeg) {
+    touchSeg = await vision.InteractiveSegmenter.createFromOptions(fileset, {
+      baseOptions: { modelAssetPath: TOUCH_MODEL, delegate: "CPU" },
+      outputCategoryMask: false, outputConfidenceMasks: true,
+    });
+  }
+  const roi = { keypoint: { x, y } };
+  let r = touchSeg.segment(src, roi);
+  if (!r) r = await new Promise(res => touchSeg.segment(src, roi, x2 => res({ confidenceMasks: x2.confidenceMasks.map(m => ({ width: m.width, height: m.height, f: m.getAsFloat32Array().slice(), getAsFloat32Array() { return this.f; } })) })));
+  const out = maskOut(r, ms => {
+    // chọn mặt nạ có giá trị cao tại điểm chạm
+    let best = ms[0], bv = -1;
+    for (const m of ms) { const f = m.getAsFloat32Array(); const v = f[Math.min(m.height - 1, Math.floor(y * m.height)) * m.width + Math.min(m.width - 1, Math.floor(x * m.width))]; if (v > bv) { bv = v; best = m; } }
+    return best;
+  });
+  const v = out.data[Math.min(out.h - 1, Math.floor(y * out.h)) * out.w + Math.min(out.w - 1, Math.floor(x * out.w))];
+  if (v < 0.5) for (let i = 0; i < out.data.length; i++) out.data[i] = 1 - out.data[i];
+  return out;
+}
+
 // ---------- chỉ số điểm mốc (MediaPipe Face Mesh 478 điểm) ----------
 const OVAL = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109];
 const LIPS_OUT = [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 409, 270, 269, 267, 0, 37, 39, 40, 185];

@@ -1,6 +1,9 @@
 // Chỉnh Xinh — giao diện
 import { Engine } from "./engine.js";
 import * as Face from "./face.js";
+import * as LY from "./layers.js";
+import * as SK from "./stickers.js";
+import { heal as healSpot } from "./heal.js";
 
 const $ = s => document.querySelector(s);
 const cv = $("#cv"), overlay = $("#overlay"), stage = $("#stage"), wrap = $("#wrap"), origImg = $("#orig");
@@ -20,6 +23,7 @@ const DEF = {
   lip: 0, lipColor: "#d23b5a", hair: 0, hairColor: "#8b4a2b",
   legA: 0.55, legB: 0.93, leg: 0,
   rot: 0, flip: false, crop: [0, 0, 1, 1], cropRatio: "free",
+  layers: [], strokes: [], heals: [],
 };
 let P = clone(DEF);
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
@@ -48,6 +52,7 @@ const S = (id, name, icon, o = {}) => ({ id, name, icon, type: "slider", min: -1
 const TABS = [
   { id: "beauty", name: "Làm đẹp", icon: "sparkles", tools: [
     { id: "auto", name: "Tự động", icon: "wand-sparkles", type: "action" },
+    { id: "heal", name: "Xoá mụn", icon: "bandage", type: "heal" },
     S("smooth", "Mịn da", "droplets", { min: 0 }),
     S("whiten", "Trắng da", "sun-medium", { min: 0 }),
     S("slim", "Mặt thon", "scan-face", { min: 0, face: 1 }),
@@ -80,6 +85,25 @@ const TABS = [
     { id: "teethBrush", name: "Cọ răng", icon: "smile-plus", type: "brush", layer: "teeth", amount: "teeth" },
     { id: "skinBrush", name: "Cọ mịn da", icon: "brush", type: "brush", layer: "skin", amount: "smooth" },
   ] },
+  { id: "layers", name: "Ghép ảnh", icon: "layers", tools: [
+    { id: "addLayer", name: "Thêm ảnh", icon: "image-plus", type: "action" },
+    { id: "cutSelf", name: "Cắt ảnh này", icon: "scissors", type: "action" },
+    { id: "lpos", name: "Vị trí", icon: "move", type: "layer" },
+    { id: "llight", name: "Ánh sáng", icon: "sun", type: "layer" },
+    { id: "lfilter", name: "Bộ lọc", icon: "aperture", type: "layer" },
+    { id: "lstyle", name: "Viền & bóng", icon: "square-dashed", type: "layer" },
+    { id: "lflip", name: "Lật", icon: "flip-horizontal-2", type: "action" },
+    { id: "ldup", name: "Nhân đôi", icon: "copy", type: "action" },
+    { id: "lup", name: "Lên trên", icon: "bring-to-front", type: "action" },
+    { id: "ldel", name: "Xoá lớp", icon: "trash-2", type: "action" },
+  ] },
+  { id: "draw", name: "Vẽ & Dán", icon: "pen-tool", tools: [
+    { id: "sticker", name: "Nhãn dán", icon: "sticker", type: "sticker" },
+    { id: "pen", name: "Cọ vẽ", icon: "pencil", type: "pen" },
+    { id: "eraser", name: "Tẩy nét", icon: "eraser", type: "pen" },
+    { id: "ldel", name: "Xoá nhãn", icon: "circle-x", type: "action" },
+    { id: "clearDraw", name: "Xoá nét vẽ", icon: "trash-2", type: "action" },
+  ] },
   { id: "crop", name: "Cắt", icon: "crop", tools: [
     { id: "free", name: "Tự do", type: "ratio", r: 0 }, { id: "1:1", name: "1:1", type: "ratio", r: 1 },
     { id: "4:5", name: "4:5", type: "ratio", r: 4 / 5 }, { id: "3:4", name: "3:4", type: "ratio", r: 3 / 4 },
@@ -96,6 +120,8 @@ const st = {
   brushSize: 46, brushStrength: 55, brushMode: "add", showMask: 0, paintingMask: 0,
   zoom: 1, panX: 0, panY: 0, fit: { x: 0, y: 0, w: 0, h: 0 },
   thumbsFor: null,
+  healSize: 14, origSrc: null, healsKey: "[]", srcDirty: false,
+  sel: null, pen: { color: "#ff5d8f", style: "pen", size: 10 }, curStroke: null,
 };
 const paint = { teeth: null, hair: null, skin: null };
 const paintDirty = new Set();
@@ -144,13 +170,78 @@ function req(pass1) {
   rafQ = true;
   requestAnimationFrame(() => {
     rafQ = false;
+    if (st.srcDirty) { eng.updateSource(st.src); st.srcDirty = false; }
     for (const n of paintDirty) eng.setPaint(n, paint[n]);
     paintDirty.clear();
     syncMesh();
     eng.render(renderParams(), currentView());
     layout();
+    drawLayersDisplay();
     drawOverlay();
   });
+}
+
+// ---------------- lớp chồng + nét vẽ ----------------
+const lyr = $("#lyr"), lctx = lyr.getContext("2d");
+const strokeCv = document.createElement("canvas");
+function layersVisible() { return st.tab !== "crop" && st.tool !== "leg"; }
+function layerMode() { return st.tab === "layers" || (st.tab === "draw" && st.tool === "sticker"); }
+function selLayer() { return P.layers.find(l => l.id === st.sel) || null; }
+function compositeLayers(g, W, H) {
+  for (const L of P.layers) LY.drawLayer(g, L, W, H, FILTERS);
+  const all = st.curStroke ? P.strokes.concat([st.curStroke]) : P.strokes;
+  if (all.length) {
+    if (strokeCv.width !== W || strokeCv.height !== H) { strokeCv.width = W; strokeCv.height = H; }
+    const sg = strokeCv.getContext("2d"); sg.clearRect(0, 0, W, H);
+    for (const s of all) SK.drawStroke(sg, s, W, H);
+    g.drawImage(strokeCv, 0, 0);
+  }
+}
+function drawLayersDisplay() {
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  const w = Math.max(1, Math.round(st.fit.w * dpr)), h = Math.max(1, Math.round(st.fit.h * dpr));
+  if (lyr.width !== w || lyr.height !== h) { lyr.width = w; lyr.height = h; }
+  lctx.clearRect(0, 0, w, h);
+  if (layersVisible()) compositeLayers(lctx, w, h);
+}
+// toạ độ trong lớp -> toạ độ trên overlay (so với stage)
+function l2s(L, lx, ly, r, sr) {
+  if (L.flip) lx = -lx;
+  const t = L.rot * Math.PI / 180;
+  return { x: r.left - sr.left + L.x * r.width + lx * Math.cos(t) - ly * Math.sin(t), y: r.top - sr.top + L.y * r.height + lx * Math.sin(t) + ly * Math.cos(t) };
+}
+function selHandles() {
+  const L = selLayer(); if (!L || !layerMode() || !layersVisible()) return null;
+  const r = cv.getBoundingClientRect(), sr = stage.getBoundingClientRect();
+  const lp = LY.localPoint(L, 0, 0, r.width, r.height, FILTERS), hw = lp.w / 2, hh = lp.h / 2;
+  const sign = L.flip ? -1 : 1;
+  return { L, r, sr, corners: [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([x, y]) => l2s(L, x, y, r, sr)),
+    rot: l2s(L, hw * sign, hh, r, sr), del: l2s(L, -hw * sign, -hh, r, sr), c: l2s(L, 0, 0, r, sr) };
+}
+function addLayerFromCanvas(c, opts = {}) {
+  const src = LY.addSource(c);
+  const Wc = cv.width, Hc = cv.height;
+  const w = opts.w || Math.min(0.62, 0.62 * (Hc / Wc) * (c.width / c.height));
+  const L = { id: "L" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), src, x: opts.x ?? 0.5, y: opts.y ?? 0.5, w, rot: 0, flip: false, opacity: 100,
+    outline: !!opts.outline, shadow: false, bright: 0, contrast: 0, sat: 0, warm: 0, filter: "none", filterAmt: 80 };
+  P.layers.push(L); st.sel = L.id;
+  commit(); refreshOpts(); req();
+  return L;
+}
+function openCutFrom(src, opts) {
+  LY.openCutout(src, c => {
+    if (st.tab !== "layers") selectTab("layers");
+    st.tool = "lpos"; refreshTools();
+    addLayerFromCanvas(c);
+    toast("Đã thêm ảnh cắt ✂️ — kéo để di chuyển, 2 ngón để phóng/xoay");
+  }, toast, opts);
+}
+async function addSticker(item) {
+  try {
+    const c = await SK.renderSticker(item);
+    const n = P.layers.length % 5;
+    addLayerFromCanvas(c, { w: 0.26, x: 0.5 + (n - 2) * 0.06, y: 0.42 + (n % 3) * 0.06 });
+  } catch (e) { toast("Không thêm được nhãn dán này"); }
 }
 
 function layout() {
@@ -207,6 +298,18 @@ function drawOverlay() {
     octx.rect(L, T, r.width, r.height); octx.rect(L + x * r.width, T + y * r.height, w * r.width, h * r.height);
     octx.fill("evenodd");
   }
+  const hs = selHandles();
+  if (hs) {
+    octx.strokeStyle = "#fff"; octx.lineWidth = 1.5; octx.setLineDash([6, 4]);
+    octx.beginPath(); hs.corners.forEach((p, i) => i ? octx.lineTo(p.x, p.y) : octx.moveTo(p.x, p.y)); octx.closePath(); octx.stroke();
+    octx.setLineDash([]);
+    const btn = (p, col, txt) => {
+      octx.fillStyle = col; octx.beginPath(); octx.arc(p.x, p.y, 13, 0, 7); octx.fill();
+      octx.strokeStyle = "#fff"; octx.lineWidth = 2; octx.stroke();
+      octx.fillStyle = "#fff"; octx.font = "700 14px -apple-system, sans-serif"; octx.textAlign = "center"; octx.textBaseline = "middle"; octx.fillText(txt, p.x, p.y + 1);
+    };
+    btn(hs.rot, "#ff4f8b", "↻"); btn(hs.del, "#3a3a48", "✕");
+  }
   if (cursor) {
     octx.strokeStyle = "rgba(255,255,255,.95)"; octx.lineWidth = 1.5;
     octx.beginPath(); octx.arc(cursor.x - sr.left, cursor.y - sr.top, cursor.r, 0, 7); octx.stroke();
@@ -237,6 +340,8 @@ function loadImage(img, url) {
   c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
   if (st.srcURL && st.srcURL !== url && st.srcURL.startsWith("blob:")) URL.revokeObjectURL(st.srcURL);
   st.src = c; st.srcURL = url; origImg.src = url;
+  st.origSrc = document.createElement("canvas"); st.origSrc.width = c.width; st.origSrc.height = c.height;
+  st.origSrc.getContext("2d").drawImage(c, 0, 0); st.healsKey = "[]";
   eng.setImage(c);
   // mặt nạ cọ
   const ms = Math.min(1, 1024 / Math.max(c.width, c.height));
@@ -305,6 +410,13 @@ function restore(s) {
     paint[n].getContext("2d").putImageData(s.pm[n].data, 0, 0);
     paintVer[n] = s.pm[n].ver; paintCache[n] = s.pm[n]; paintDirty.add(n);
   }
+  const hk = JSON.stringify(P.heals || []);
+  if (hk !== st.healsKey) {
+    const g = st.src.getContext("2d"); g.drawImage(st.origSrc, 0, 0);
+    for (const h of P.heals) healSpot(g, st.src.width, st.src.height, h.x, h.y, h.r);
+    st.healsKey = hk; st.srcDirty = true;
+  }
+  if (!selLayer()) st.sel = P.layers.length ? P.layers[P.layers.length - 1].id : null;
   st.meshDirty = true; refreshOpts(); refreshTools(); req(true);
 }
 function undo() { if (!hist.length) return; fut.push(cur); cur = hist.pop(); restore(cur); updUndo(); }
@@ -423,6 +535,23 @@ function refreshOpts() {
         else if (st.hair !== "ok") h += `<div class="hint">Chưa tự tìm được tóc — tô lên tóc bằng ngón tay.</div>`;
       }
     }
+  } else if (t.type === "heal") {
+    h = sliderHTML("healSize", "Cỡ chấm", 5, 60, st.healSize) +
+      `<div class="hint">Chấm lên mụn, vết thâm, nốt ruồi… để xoá · 2 ngón để phóng to cho chính xác${P.heals.length ? ` · <button class="toggle" data-act="clearHeal">Bỏ ${P.heals.length} chấm</button>` : ""}</div>`;
+  } else if (t.type === "layer") {
+    const L = selLayer();
+    if (!P.layers.length) h = `<div class="hint">Bấm <b>Thêm ảnh</b> để chọn ảnh khác, chạm vào người/vật để cắt rồi chồng lên ảnh này · hoặc <b>Cắt ảnh này</b></div>`;
+    else if (!L) h = `<div class="hint">Chạm vào ảnh ghép / nhãn dán để chọn</div>`;
+    else if (t.id === "lpos") h = sliderHTML("L:w", "Cỡ", 3, 200, Math.round(L.w * 100)) + sliderHTML("L:rot", "Xoay", -180, 180, Math.round(L.rot)) + sliderHTML("L:opacity", "Độ rõ", 5, 100, L.opacity);
+    else if (t.id === "llight") h = sliderHTML("L:bright", "Độ sáng", -100, 100, L.bright) + sliderHTML("L:contrast", "Tương phản", -100, 100, L.contrast) + sliderHTML("L:sat", "Bão hòa", -100, 100, L.sat) + sliderHTML("L:warm", "Nhiệt độ", -100, 100, L.warm);
+    else if (t.id === "lfilter") h = `<div class="chips">${FILTERS.map(f => `<button class="chip${L.filter === f.id ? " on" : ""}" data-lf="${f.id}">${f.name}</button>`).join("")}</div>` + (L.filter !== "none" ? sliderHTML("L:filterAmt", "Độ đậm", 0, 100, L.filterAmt) : "");
+    else if (t.id === "lstyle") h = `<div class="opt-row" style="justify-content:center;gap:10px"><button class="toggle big${L.outline ? " on" : ""}" data-lt="outline">Viền trắng</button><button class="toggle big${L.shadow ? " on" : ""}" data-lt="shadow">Bóng đổ</button></div><div class="hint">Viền trắng tạo kiểu nhãn dán · Bóng đổ giúp ảnh ghép tự nhiên hơn</div>`;
+  } else if (t.type === "sticker") {
+    h = `<div class="stk-grid">${SK.STICKERS.map(x => `<button class="stk" data-stk="${x.id}" title="${x.name}"><img src="${SK.stickerURL(x)}" alt="${x.name}"></button>`).join("")}${SK.EMOJIS.map(x => `<button class="stk emo" data-emo="${x}">${x}</button>`).join("")}</div><div class="hint">Chạm để dán · kéo để di chuyển · nút ↻ hoặc 2 ngón để phóng/xoay</div>`;
+  } else if (t.type === "pen") {
+    if (t.id === "pen") h = `<div class="swatches">${SK.PEN_COLORS.map(c => `<button class="sw${c === st.pen.color ? " on" : ""}" style="background:${c}" data-pc="${c}"></button>`).join("")}</div>` +
+      `<div class="opt-row"><div class="seg pens">${SK.PEN_STYLES.map(x => `<button data-ps="${x.id}" class="${st.pen.style === x.id ? "on" : ""}">${x.name}</button>`).join("")}</div></div>`;
+    h += sliderHTML("penSize", "Cỡ nét", 2, 40, st.pen.size);
   } else if (t.type === "brush") {
     h = sliderHTML(t.amount, t.amount === "teeth" ? "Độ trắng" : "Độ mịn", 0, 100, P[t.amount]) +
       `<div class="opt-row"><div class="seg"><button data-mode="add" class="${st.brushMode === "add" ? "on" : ""}">Tô</button><button data-mode="erase" class="${st.brushMode === "erase" ? "on" : ""}">Xoá</button></div><input type="range" min="10" max="120" value="${st.brushSize}" data-k="brushSize"><button class="toggle${st.showMask ? " on" : ""}" data-toggle="mask">Hiện vùng</button></div>`;
@@ -431,13 +560,15 @@ function refreshOpts() {
   o.querySelectorAll("input[type=range]").forEach(paintFill);
 }
 
-const UI_KEYS = { brushSize: 1, brushStrength: 1 };
+const UI_KEYS = { brushSize: 1, brushStrength: 1, penSize: 1, healSize: 1 };
 $("#opts").addEventListener("input", e => {
   const inp = e.target; if (inp.type !== "range") return;
   const k = inp.dataset.k, v = +inp.value;
   paintFill(inp);
   const val = inp.parentElement.querySelector(".val"); if (val) val.textContent = v;
+  if (k === "penSize") { st.pen.size = v; return; }
   if (UI_KEYS[k]) { st[k] = v; return; }
+  if (k.startsWith("L:")) { const L = selLayer(); if (!L) return; const pr = k.slice(2); L[pr] = pr === "w" ? v / 100 : v; req(); return; }
   const before = P.leg;
   P[k] = v;
   if (k === "leg" && (P.crop[2] < 1 || P.crop[3] < 1) && before !== v) { P.crop = [0, 0, 1, 1]; P.cropRatio = "free"; toast("Đã bỏ khung cắt vì ảnh đổi chiều cao"); }
@@ -449,13 +580,30 @@ $("#opts").addEventListener("change", e => {
 });
 $("#opts").addEventListener("click", e => {
   const sw = e.target.closest(".sw");
-  if (sw) {
+  if (sw && sw.dataset.c) {
     if (st.tool === "lip") { P.lipColor = sw.dataset.c; if (!P.lip) P.lip = 55; }
     else { P.hairColor = sw.dataset.c; if (!P.hair) P.hair = 65; }
     commit(); refreshOpts(); refreshTools(); req(true); return;
   }
   const m = e.target.closest("[data-mode]");
   if (m) { st.brushMode = m.dataset.mode; refreshOpts(); return; }
+  if (e.target.closest("[data-act=clearHeal]")) {
+    P.heals = []; const g = st.src.getContext("2d"); g.drawImage(st.origSrc, 0, 0); st.healsKey = "[]"; st.srcDirty = true;
+    commit(); refreshOpts(); req(true); toast("Đã bỏ hết các chấm xoá mụn"); return;
+  }
+  const L = selLayer();
+  const lf = e.target.closest("[data-lf]");
+  if (lf && L) { L.filter = lf.dataset.lf; commit(); refreshOpts(); req(); return; }
+  const lt = e.target.closest("[data-lt]");
+  if (lt && L) { L[lt.dataset.lt] = !L[lt.dataset.lt]; commit(); refreshOpts(); req(); return; }
+  const stk = e.target.closest("[data-stk]");
+  if (stk) { addSticker(SK.STICKERS.find(x => x.id === stk.dataset.stk)); return; }
+  const emo = e.target.closest("[data-emo]");
+  if (emo) { addSticker({ emoji: emo.dataset.emo }); return; }
+  const pc = e.target.closest("[data-pc]");
+  if (pc) { st.pen.color = pc.dataset.pc; refreshOpts(); return; }
+  const ps = e.target.closest("[data-ps]");
+  if (ps) { st.pen.style = ps.dataset.ps; refreshOpts(); return; }
   const tg = e.target.closest("[data-toggle=mask]");
   if (tg) { st.showMask = st.showMask ? 0 : maskIdFor(st.tool); refreshOpts(); req(true); }
 });
@@ -471,6 +619,26 @@ function runAction(id) {
     eng.L.fill(0); P.leg = 0; st.meshDirty = true; commit(); refreshTools(); refreshOpts(); req(); toast("Đã bỏ hết phần kéo thon tay");
   } else if (id === "rotate") {
     P.rot = (P.rot + 1) % 4; P.crop = [0, 0, 1, 1]; P.cropRatio = "free"; commit(); refreshTools(); req();
+  } else if (id === "addLayer") {
+    $("#layerIn").click();
+  } else if (id === "cutSelf") {
+    // sao chép một vùng của chính ảnh đang chỉnh (đã áp hiệu ứng)
+    syncMesh(); eng.dirty1 = true; eng.render(renderParams({ showMask: 0 }), finalView());
+    const c = document.createElement("canvas"); c.width = cv.width; c.height = cv.height; c.getContext("2d").drawImage(cv, 0, 0);
+    req(true);
+    openCutFrom(c, { mode: "lasso", auto: false, hint: "Vẽ vòng quanh vùng muốn sao chép ra" });
+  } else if (["lflip", "ldup", "lup", "ldel"].includes(id)) {
+    const L = selLayer();
+    if (!L) return toast(P.layers.length ? "Chạm vào lớp muốn sửa trước" : "Chưa có ảnh ghép / nhãn dán nào");
+    const i = P.layers.indexOf(L);
+    if (id === "lflip") L.flip = !L.flip;
+    if (id === "ldup") { const n = clone(L); n.id = "L" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); n.x = Math.min(0.95, n.x + 0.05); n.y = Math.min(0.95, n.y + 0.05); P.layers.push(n); st.sel = n.id; }
+    if (id === "lup") { P.layers.splice(i, 1); P.layers.push(L); toast("Đã đưa lên trên cùng"); }
+    if (id === "ldel") { P.layers.splice(i, 1); st.sel = null; }
+    commit(); refreshOpts(); req();
+  } else if (id === "clearDraw") {
+    if (!P.strokes.length) return toast("Chưa có nét vẽ nào");
+    P.strokes = []; commit(); req(); toast("Đã xoá hết nét vẽ");
   } else if (id === "flip") {
     P.flip = !P.flip; if (P.rot % 2) P.rot = (P.rot + 2) % 4;
     P.crop = [1 - P.crop[0] - P.crop[2], P.crop[1], P.crop[2], P.crop[3]]; commit(); req();
@@ -544,6 +712,8 @@ stage.addEventListener("pointerdown", e => {
     if (act) cancelAction();
     const [a, b] = [...ptrs.values()];
     pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2, z: st.zoom, px: st.panX, py: st.panY };
+    const L = selLayer();
+    if (layerMode() && L) Object.assign(pinch, { layer: L, a: Math.atan2(b.y - a.y, b.x - a.x), w0: L.w, r0: L.rot });
     return;
   }
   if (ptrs.size === 1) startAction(e);
@@ -554,6 +724,12 @@ stage.addEventListener("pointermove", e => {
   if (pinch && ptrs.size >= 2) {
     const [a, b] = [...ptrs.values()];
     const d = Math.hypot(a.x - b.x, a.y - b.y), mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    if (pinch.layer) {
+      const L = pinch.layer;
+      L.w = clamp(pinch.w0 * d / pinch.d, 0.03, 3);
+      L.rot = pinch.r0 + (Math.atan2(b.y - a.y, b.x - a.x) - pinch.a) * 180 / Math.PI;
+      pinch.moved = true; req(); return;
+    }
     const sr = stage.getBoundingClientRect();
     const z = clamp(pinch.z * d / pinch.d, 1, 8);
     const lx = (pinch.mx - sr.left - st.fit.x - pinch.px) / pinch.z, ly = (pinch.my - sr.top - st.fit.y - pinch.py) / pinch.z;
@@ -566,7 +742,7 @@ stage.addEventListener("pointermove", e => {
 });
 const up = e => {
   ptrs.delete(e.pointerId);
-  if (pinch && ptrs.size < 2) { pinch = null; if (ptrs.size === 0) return; }
+  if (pinch && ptrs.size < 2) { if (pinch.layer && pinch.moved) { commit(); refreshOpts(); } pinch = null; if (ptrs.size === 0) return; }
   if (act && ptrs.size === 0) endAction(e);
 };
 stage.addEventListener("pointerup", up);
@@ -580,12 +756,26 @@ stage.addEventListener("wheel", e => {
   applyZoom(); drawOverlay();
 }, { passive: false });
 
-function isBrushTool() { const t = toolDef(st.tool); return t && (t.type === "liquify" || t.type === "brush" || (t.type === "color" && t.id === "hair")); }
-function brushScreenR() { return st.brushSize * (isMobile ? 1 : 0.8); }
+function isBrushTool() { const t = toolDef(st.tool); return t && (t.type === "liquify" || t.type === "heal" || t.type === "brush" || (t.type === "color" && t.id === "hair")); }
+function brushScreenR() { return st.tool === "heal" ? st.healSize : st.brushSize * (isMobile ? 1 : 0.8); }
+function doHeal(p) {
+  const s = eng.preToSource(p.x, p.y), r = Math.max(2, st.healSize * p.scale);
+  const h = { x: Math.round(s.x * 10) / 10, y: Math.round(s.y * 10) / 10, r: Math.round(r * 10) / 10 };
+  healSpot(st.src.getContext("2d"), st.src.width, st.src.height, h.x, h.y, h.r);
+  P.heals.push(h); st.healsKey = JSON.stringify(P.heals); st.srcDirty = true;
+  return h;
+}
 
 function startAction(e) {
   const t = toolDef(st.tool);
   if (st.tab === "crop") return;
+  if (layerMode() && layerPointer(e)) return;
+  if (t && t.type === "pen") {
+    const r = cv.getBoundingClientRect();
+    st.curStroke = { color: st.pen.color, style: t.id === "eraser" ? "erase" : st.pen.style, size: st.pen.size / r.width, pts: [[(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height]] };
+    act = { kind: "stroke", x: e.clientX, y: e.clientY };
+    req(); return;
+  }
   if (t && t.type === "leg") {
     const r = cv.getBoundingClientRect();
     const yA = eng.preToCanvas(0, P.legA * eng.H, currentView()).v * r.height + r.top;
@@ -594,6 +784,12 @@ function startAction(e) {
     if (Math.min(dA, dB) > 36) return;
     act = { kind: "leg", which: dA < dB ? "legA" : "legB" };
     return;
+  }
+  if (t && t.type === "heal") {
+    const p = screenToPre(e.clientX, e.clientY);
+    act = { kind: "heal", last: doHeal(p) };
+    cursor = { x: e.clientX, y: e.clientY, r: brushScreenR() };
+    req(true); return;
   }
   if (isBrushTool()) {
     const p = screenToPre(e.clientX, e.clientY);
@@ -609,7 +805,51 @@ function startAction(e) {
   // không có công cụ cọ: kéo để di chuyển khi đang phóng to
   if (st.zoom > 1) act = { kind: "pan", x: e.clientX, y: e.clientY, px: st.panX, py: st.panY };
 }
+function layerPointer(e) {
+  const hs = selHandles();
+  if (hs) {
+    const sx = e.clientX - hs.sr.left, sy = e.clientY - hs.sr.top;
+    if (Math.hypot(sx - hs.del.x, sy - hs.del.y) < 20) { runAction("ldel"); return true; }
+    if (Math.hypot(sx - hs.rot.x, sy - hs.rot.y) < 22) {
+      act = { kind: "lscale", L: hs.L, cx: hs.c.x + hs.sr.left, cy: hs.c.y + hs.sr.top, w0: hs.L.w, r0: hs.L.rot };
+      act.d0 = Math.hypot(e.clientX - act.cx, e.clientY - act.cy); act.a0 = Math.atan2(e.clientY - act.cy, e.clientX - act.cx);
+      return true;
+    }
+  }
+  const r = cv.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
+  for (let i = P.layers.length - 1; i >= 0; i--) {
+    const L = P.layers[i];
+    if (LY.localPoint(L, px, py, r.width, r.height, FILTERS).inside) {
+      const changed = st.sel !== L.id;
+      st.sel = L.id;
+      act = { kind: "lmove", L, sx: e.clientX, sy: e.clientY, x0: L.x, y0: L.y, w: r.width, h: r.height };
+      if (changed) refreshOpts();
+      drawOverlay();
+      return true;
+    }
+  }
+  if (st.sel) { st.sel = null; refreshOpts(); drawOverlay(); }
+  return false;
+}
 function moveAction(e) {
+  if (act.kind === "lmove") { act.L.x = act.x0 + (e.clientX - act.sx) / act.w; act.L.y = act.y0 + (e.clientY - act.sy) / act.h; act.moved = true; req(); return; }
+  if (act.kind === "lscale") {
+    const d = Math.hypot(e.clientX - act.cx, e.clientY - act.cy), a = Math.atan2(e.clientY - act.cy, e.clientX - act.cx);
+    act.L.w = clamp(act.w0 * d / Math.max(1, act.d0), 0.03, 3); act.L.rot = act.r0 + (a - act.a0) * 180 / Math.PI; act.moved = true; req(); return;
+  }
+  if (act.kind === "stroke") {
+    if (Math.hypot(e.clientX - act.x, e.clientY - act.y) < 2) return;
+    act.x = e.clientX; act.y = e.clientY;
+    const r = cv.getBoundingClientRect();
+    st.curStroke.pts.push([(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height]);
+    req(); return;
+  }
+  if (act.kind === "heal") {
+    const p = screenToPre(e.clientX, e.clientY), s = eng.preToSource(p.x, p.y);
+    cursor = { x: e.clientX, y: e.clientY, r: brushScreenR() };
+    if (Math.hypot(s.x - act.last.x, s.y - act.last.y) >= act.last.r * 0.9) { act.last = doHeal(p); req(true); } else drawOverlay();
+    return;
+  }
   if (act.kind === "pan") { st.panX = act.px + e.clientX - act.x; st.panY = act.py + e.clientY - act.y; applyZoom(); drawOverlay(); return; }
   if (act.kind === "leg") {
     const r = cv.getBoundingClientRect();
@@ -628,6 +868,10 @@ function endAction() {
   clearInterval(holdTimer);
   const k = act && act.kind;
   if (k === "paint") { if (act.layer) paintVer[act.layer]++; st.paintingMask = 0; }
+  if (k === "heal") refreshOpts();
+  if (k === "stroke" && st.curStroke) { P.strokes.push(st.curStroke); st.curStroke = null; }
+  if ((k === "lmove" || k === "lscale") && !act.moved) { act = null; return; }
+  if (k === "lmove" || k === "lscale") refreshOpts();
   act = null;
   if (k && k !== "pan") commit();
   if (isMobile) cursor = null;
@@ -635,6 +879,7 @@ function endAction() {
 }
 function cancelAction() {
   clearInterval(holdTimer);
+  st.curStroke = null;
   if (act && act.L0) { eng.L.set(act.L0); eng.updateMesh(); }
   if (act && act.img0) { for (const n in act.img0) { paint[n].getContext("2d").putImageData(act.img0[n], 0, 0); paintDirty.add(n); } }
   act = null; st.paintingMask = 0; cursor = null; req(true);
@@ -699,7 +944,9 @@ async function save() {
     syncMesh();
     eng.dirty1 = true;
     eng.render(renderParams({ showMask: 0 }), finalView());
-    const blob = await new Promise(r => cv.toBlob(r, "image/jpeg", 0.95));
+    const out = document.createElement("canvas"); out.width = cv.width; out.height = cv.height;
+    const og = out.getContext("2d"); og.drawImage(cv, 0, 0); compositeLayers(og, out.width, out.height);
+    const blob = await new Promise(r => out.toBlob(r, "image/jpeg", 0.95));
     req(true);
     const name = `chinh-xinh-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "")}.jpg`;
     saveFile = new File([blob], name, { type: "image/jpeg" });
@@ -730,6 +977,11 @@ $("#btnOpen").onclick = () => $("#fileIn").click();
 $("#btnCam").onclick = () => $("#camIn").click();
 $("#fileIn").onchange = e => { openFile(e.target.files[0]); e.target.value = ""; };
 $("#camIn").onchange = e => { openFile(e.target.files[0]); e.target.value = ""; };
+$("#layerIn").onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+  try { const img = new Image(); img.src = URL.createObjectURL(f); await img.decode(); openCutFrom(img); }
+  catch (err) { toast("Không mở được ảnh này"); }
+};
 $("#btnUndo").onclick = undo;
 $("#btnRedo").onclick = redo;
 $("#btnSave").onclick = save;
@@ -755,4 +1007,4 @@ if (qs) {
   $("#busy").hidden = false;
   fetch(qs).then(r => r.blob()).then(b => openFile(new File([b], "test.jpg", { type: b.type }))).catch(() => { $("#busy").hidden = true; toast("Không tải được ảnh thử"); });
 }
-window.__cx = { eng, P: () => P, st, set: o => { Object.assign(P, o); refreshOpts(); refreshTools(); req(true); }, reset: () => { P = clone(DEF); eng.L.fill(0); st.meshDirty = true; req(true); } };
+window.__cx = { eng, LY, SK, openCutFrom, addSticker, cutFromURL: async u => { const b = await (await fetch(u)).blob(); const img = new Image(); img.src = URL.createObjectURL(b); await img.decode(); openCutFrom(img); }, P: () => P, st, set: o => { Object.assign(P, o); refreshOpts(); refreshTools(); req(true); }, reset: () => { st.sel = null; P = clone(DEF); eng.L.fill(0); st.meshDirty = true; req(true); } };
