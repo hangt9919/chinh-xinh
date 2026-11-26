@@ -1,5 +1,5 @@
 // Chỉnh Xinh — lưu đệm để mở nhanh & dùng khi mất mạng
-const V = "chinh-xinh-v2";
+const V = "chinh-xinh-v3";
 const SHELL = ["./", "index.html", "style.css", "js/app.js", "js/engine.js", "js/face.js", "js/layers.js", "js/stickers.js", "js/heal.js", "manifest.webmanifest", "icons/icon-192.png", "icons/apple-touch-icon.png"];
 const CDN = ["cdn.jsdelivr.net", "storage.googleapis.com", "unpkg.com"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(V).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
@@ -9,6 +9,12 @@ self.addEventListener("fetch", e => {
   if (e.request.method !== "GET") return;
   if (CDN.includes(u.hostname)) {
     // thư viện & model: lấy từ đệm trước
+    e.respondWith(caches.open(V).then(async c => {
+      const hit = await c.match(e.request); if (hit) return hit;
+      const r = await fetch(e.request); if (r.ok) c.put(e.request, r.clone()); return r;
+    }));
+  } else if (u.origin === location.origin && u.pathname.includes("/models/")) {
+    // model AI lớn, không đổi: lấy từ đệm trước
     e.respondWith(caches.open(V).then(async c => {
       const hit = await c.match(e.request); if (hit) return hit;
       const r = await fetch(e.request); if (r.ok) c.put(e.request, r.clone()); return r;
