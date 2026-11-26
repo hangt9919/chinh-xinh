@@ -44,6 +44,8 @@ uniform mat3 u_cm;
 uniform vec3 u_cmOff;
 uniform float u_cmAmt;
 uniform float u_showMask;
+uniform vec3 u_ctG, u_ctO;
+uniform float u_ctAmt;
 
 float luma(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
 float lum(vec3 c){ return dot(c, vec3(0.3, 0.59, 0.11)); }
@@ -120,6 +122,14 @@ void main(){
   vec3 nb = (texture2D(u_src, v_uv + vec2(u_texel.x, 0.0)).rgb + texture2D(u_src, v_uv - vec2(u_texel.x, 0.0)).rgb
            + texture2D(u_src, v_uv + vec2(0.0, u_texel.y)).rgb + texture2D(u_src, v_uv - vec2(0.0, u_texel.y)).rgb) * 0.25;
   c += (c0 - nb) * u_sharp * 2.2 * (1.0 - sm);
+
+  // Khớp màu (chuyển thống kê màu trong không gian YCbCr)
+  if (u_ctAmt > 0.0) {
+    float Y = luma(c);
+    vec3 y = vec3(Y, (c.b - Y) * 0.564 + 0.5, (c.r - Y) * 0.713 + 0.5) * u_ctG + u_ctO;
+    vec3 m = vec3(y.x + 1.403 * (y.z - 0.5), y.x - 0.344 * (y.y - 0.5) - 0.714 * (y.z - 0.5), y.x + 1.773 * (y.y - 0.5));
+    c = mix(c, clamp(m, 0.0, 1.0), u_ctAmt);
+  }
 
   // Chỉnh màu
   c *= exp2(u_exposure);
@@ -502,6 +512,7 @@ export class Engine {
     gl.uniformMatrix3fv(u.u_cm, false, P.cm || IDENT);
     gl.uniform3fv(u.u_cmOff, P.cmOff || [0, 0, 0]);
     f1("u_cmAmt", P.cmAmt); f1("u_showMask", P.showMask);
+    gl.uniform3fv(u.u_ctG, P.ctG || [1, 1, 1]); gl.uniform3fv(u.u_ctO, P.ctO || [0, 0, 0]); f1("u_ctAmt", P.ctAmt);
     this._bindTex(p, "u_src", this.texSrc, 0);
     this._bindTex(p, "u_blur", this.blur.t, 1);
     this._bindTex(p, "u_seg", this.texSeg, 2);

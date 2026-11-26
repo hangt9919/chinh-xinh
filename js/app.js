@@ -4,6 +4,7 @@ import * as Face from "./face.js";
 import * as LY from "./layers.js";
 import * as SK from "./stickers.js";
 import { heal as healSpot } from "./heal.js";
+import * as MT from "./match.js";
 
 const $ = s => document.querySelector(s);
 const cv = $("#cv"), overlay = $("#overlay"), stage = $("#stage"), wrap = $("#wrap"), origImg = $("#orig");
@@ -24,6 +25,7 @@ const DEF = {
   legA: 0.55, legB: 0.93, leg: 0,
   rot: 0, flip: false, crop: [0, 0, 1, 1], cropRatio: "free",
   layers: [], strokes: [], heals: [],
+  match: null, matchAmt: 80, matchRef: null,
 };
 let P = clone(DEF);
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
@@ -72,6 +74,7 @@ const TABS = [
     { id: "resetWarp", name: "Bỏ hết", icon: "rotate-ccw", type: "action" },
   ] },
   { id: "adjust", name: "Chỉnh", icon: "sliders-horizontal", tools: [
+    { id: "match", name: "Khớp màu", icon: "blend", type: "match" },
     S("bright", "Độ sáng", "sun"), S("exposure", "Phơi sáng", "aperture"), S("contrast", "Tương phản", "contrast"),
     S("high", "Vùng sáng", "sunrise"), S("shadow", "Vùng tối", "moon"), S("sat", "Bão hòa", "droplet"),
     S("vib", "Sống động", "palette"), S("warm", "Nhiệt độ", "thermometer"), S("tint", "Tông màu", "pipette"),
@@ -90,6 +93,7 @@ const TABS = [
     { id: "cutSelf", name: "Cắt ảnh này", icon: "scissors", type: "action" },
     { id: "lpos", name: "Vị trí", icon: "move", type: "layer" },
     { id: "llight", name: "Ánh sáng", icon: "sun", type: "layer" },
+    { id: "lmatch", name: "Khớp màu", icon: "blend", type: "layer" },
     { id: "lfilter", name: "Bộ lọc", icon: "aperture", type: "layer" },
     { id: "lstyle", name: "Viền & bóng", icon: "square-dashed", type: "layer" },
     { id: "lflip", name: "Lật", icon: "flip-horizontal-2", type: "action" },
@@ -114,6 +118,15 @@ const TABS = [
   ] },
 ];
 
+// ---------------- kiểu chỉnh đã lưu (trên máy này) ----------------
+const PRESET_KEYS = ["exposure", "bright", "contrast", "high", "shadow", "sat", "vib", "warm", "tint", "sharp", "fade", "vig", "grain", "filter", "filterAmt",
+  "smooth", "whiten", "teeth", "slim", "small", "chin", "eye", "nose", "forehead", "lip", "lipColor", "hair", "hairColor", "match", "matchAmt", "matchRef"];
+function loadPresets() { try { return JSON.parse(localStorage.getItem("cx.presets") || "[]"); } catch (e) { return []; } }
+function savePresets(list) { try { localStorage.setItem("cx.presets", JSON.stringify(list)); return true; } catch (e) { return false; } }
+let presets = loadPresets();
+function presetTools() { return presets.map(x => ({ id: "pre_" + x.id, name: x.name, type: "preset", pid: x.id })); }
+function tabTools(tab) { return tab.id === "filter" ? [{ id: "savePreset", name: "Lưu kiểu", icon: "bookmark-plus", type: "action" }, ...presetTools(), ...tab.tools] : tab.tools; }
+
 const st = {
   tab: "beauty", tool: null, loaded: false, src: null, srcURL: null,
   face: "idle", faceCount: 0, hair: "idle", token: 0,
@@ -133,15 +146,17 @@ const hex2rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255);
 let toastT;
 function toast(msg, ms = 2200) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), ms); }
 function icons() { window.lucide && lucide.createIcons({ attrs: { "stroke-width": 1.8 } }); }
-const toolDef = id => { for (const t of TABS) for (const x of t.tools) if (x.id === id && t.id === st.tab) return x; return null; };
+const toolDef = id => { const tab = TABS.find(t => t.id === st.tab); return tab ? tabTools(tab).find(x => x.id === id) || null : null; };
 
-function renderParams(extra) {
-  const f = FILTERS.find(x => x.id === P.filter) || FILTERS[0], a = P.filterAmt / 100;
+function renderParams(extra, src) {
+  const Q = src || P;
+  const f = FILTERS.find(x => x.id === Q.filter) || FILTERS[0], a = Q.filterAmt / 100;
   const R = {};
-  for (const k of ["exposure", "bright", "contrast", "high", "shadow", "sat", "vib", "warm", "tint", "sharp", "fade", "vig", "grain", "smooth", "whiten", "teeth", "lip", "hair"]) R[k] = P[k] / 100;
+  for (const k of ["exposure", "bright", "contrast", "high", "shadow", "sat", "vib", "warm", "tint", "sharp", "fade", "vig", "grain", "smooth", "whiten", "teeth", "lip", "hair"]) R[k] = (Q[k] || 0) / 100;
   for (const k in f.p) R[k] = (R[k] || 0) + f.p[k] * a;
   R.cm = f.cm ? T3(f.cm) : null; R.cmOff = f.off || [0, 0, 0]; R.cmAmt = f.cm ? a : 0;
-  R.lipColor = hex2rgb(P.lipColor); R.hairColor = hex2rgb(P.hairColor);
+  R.lipColor = hex2rgb(Q.lipColor || DEF.lipColor); R.hairColor = hex2rgb(Q.hairColor || DEF.hairColor);
+  if (Q.match) { R.ctG = Q.match.g; R.ctO = Q.match.o; R.ctAmt = (Q.matchAmt ?? 80) / 100; }
   R.showMask = st.paintingMask || st.showMask;
   return Object.assign(R, extra || {});
 }
@@ -450,6 +465,7 @@ function selectTab(id, keepTool) {
 }
 function isChanged(t) {
   if (t.type === "slider") return P[t.id] !== 0;
+  if (t.type === "match") return !!P.match;
   if (t.type === "filter") return false;
   if (t.id === "lip") return P.lip > 0;
   if (t.id === "hair") return P.hair > 0;
@@ -458,7 +474,8 @@ function isChanged(t) {
 }
 function buildTools() {
   const tab = TABS.find(t => t.id === st.tab);
-  $("#tools").innerHTML = tab.tools.map(t => {
+  $("#tools").innerHTML = tabTools(tab).map(t => {
+    if (t.type === "preset") return `<button class="tool thumb preset" data-id="${t.id}"><span class="ic" data-thumb="${t.id}"></span><span class="lb">${t.name.replace(/</g, "&lt;")}</span></button>`;
     if (t.type === "filter") return `<button class="tool thumb" data-id="${t.id}"><span class="ic" data-thumb="${t.id}"></span><span class="lb">${t.name}</span></button>`;
     if (t.type === "ratio") return `<button class="tool ratio" data-id="${t.id}"><span class="ic">${t.id === "free" ? '<i data-lucide="scan"></i>' : t.id === "orig" ? '<i data-lucide="image"></i>' : t.name}</span><span class="lb">${t.id === "free" || t.id === "orig" ? t.name : "Tỉ lệ"}</span></button>`;
     return `<button class="tool" data-id="${t.id}"><span class="ic"><i data-lucide="${t.icon}"></i></span><span class="lb">${t.name}</span></button>`;
@@ -469,8 +486,9 @@ function buildTools() {
 }
 function refreshTools() {
   const tab = TABS.find(t => t.id === st.tab);
+  const list = tabTools(tab);
   document.querySelectorAll("#tools .tool").forEach(b => {
-    const t = tab.tools.find(x => x.id === b.dataset.id);
+    const t = list.find(x => x.id === b.dataset.id);
     const on = t.type === "filter" ? P.filter === t.id : t.type === "ratio" ? P.cropRatio === t.id : st.tool === t.id;
     b.classList.toggle("on", on);
     b.querySelector(".dot")?.remove();
@@ -482,6 +500,12 @@ $("#tools").addEventListener("click", e => {
   const t = toolDef(b.dataset.id); if (!t) return;
   if (t.type === "action") return runAction(t.id);
   if (t.type === "filter") { P.filter = t.id; if (t.id !== "none" && P.filterAmt === 0) P.filterAmt = 80; commit(); req(true); }
+  if (t.type === "preset") {
+    const pr = presets.find(x => x.id === t.pid); if (!pr) return;
+    Object.assign(P, clone(pr.p));
+    if (P.matchRef) P.match = MT.transfer(MT.stats(st.src), P.matchRef); // tính lại cho ảnh này
+    commit(); req(true); toast(`Đã áp dụng kiểu “${pr.name}”`);
+  }
   if (t.type === "ratio") { setRatio(t); }
   if (t.type === "brush") {
     if (P[t.amount] === 0) { P[t.amount] = t.amount === "teeth" ? 60 : 55; commit(); req(true); }
@@ -512,7 +536,7 @@ function refreshOpts() {
   if (!st.loaded) { o.innerHTML = ""; return; }
   const t = toolDef(st.tool);
   let h = "";
-  if (st.tab === "filter") {
+  if (st.tab === "filter" && !(t && t.type === "preset")) {
     h = P.filter === "none" ? `<div class="hint">Chọn một bộ lọc bên dưới</div>` : sliderHTML("filterAmt", "Độ đậm", 0, 100, P.filterAmt);
   } else if (st.tab === "crop") {
     h = `<div class="hint">Kéo các góc khung để cắt · Chọn tỉ lệ hoặc xoay bên dưới</div>`;
@@ -538,6 +562,13 @@ function refreshOpts() {
         else if (st.hair !== "ok") h += `<div class="hint">Chưa tự tìm được tóc — tô lên tóc bằng ngón tay.</div>`;
       }
     }
+  } else if (t.type === "preset") {
+    const pr = presets.find(x => x.id === t.pid);
+    h = `<div class="hint">Đã áp dụng kiểu <b>${pr ? pr.name.replace(/</g, "&lt;") : ""}</b> · chỉnh thêm ở các tab khác nếu muốn</div><div class="opt-row" style="justify-content:center;gap:10px"><button class="toggle big" data-act="renPreset">Đổi tên</button><button class="toggle big" data-act="delPreset">Xoá kiểu này</button></div>`;
+  } else if (t.type === "match") {
+    if (!P.match) h = `<div class="opt-row" style="justify-content:center"><button class="toggle big on" data-act="pickRef">Chọn ảnh mẫu</button></div><div class="hint">Chọn một ảnh có tông màu bạn thích — ảnh này sẽ đổi màu theo ảnh mẫu</div>`;
+    else h = (st.refThumb ? `<div class="opt-row"><img class="ref-thumb" src="${st.refThumb}" alt=""><div class="hint" style="text-align:left;flex:1">Đang khớp màu theo ảnh mẫu</div></div>` : "") +
+      sliderHTML("matchAmt", "Độ khớp", 0, 100, P.matchAmt) + `<div class="opt-row" style="justify-content:center;gap:10px"><button class="toggle big" data-act="pickRef">Đổi ảnh mẫu</button><button class="toggle big" data-act="clearMatch">Bỏ khớp màu</button></div>`;
   } else if (t.type === "heal") {
     h = sliderHTML("healSize", "Cỡ chấm", 5, 60, st.healSize) +
       `<div class="hint">Chấm lên mụn, vết thâm, nốt ruồi… để xoá · 2 ngón để phóng to cho chính xác${P.heals.length ? ` · <button class="toggle" data-act="clearHeal">Bỏ ${P.heals.length} chấm</button>` : ""}</div>`;
@@ -548,6 +579,8 @@ function refreshOpts() {
     else if (t.id === "lpos") h = sliderHTML("L:w", "Cỡ", 3, 200, Math.round(L.w * 100)) + sliderHTML("L:rot", "Xoay", -180, 180, Math.round(L.rot)) + sliderHTML("L:opacity", "Độ rõ", 5, 100, L.opacity);
     else if (t.id === "llight") h = sliderHTML("L:bright", "Độ sáng", -100, 100, L.bright) + sliderHTML("L:contrast", "Tương phản", -100, 100, L.contrast) + sliderHTML("L:sat", "Bão hòa", -100, 100, L.sat) + sliderHTML("L:warm", "Nhiệt độ", -100, 100, L.warm);
     else if (t.id === "lfilter") h = `<div class="chips">${FILTERS.map(f => `<button class="chip${L.filter === f.id ? " on" : ""}" data-lf="${f.id}">${f.name}</button>`).join("")}</div>` + (L.filter !== "none" ? sliderHTML("L:filterAmt", "Độ đậm", 0, 100, L.filterAmt) : "");
+    else if (t.id === "lmatch") h = !L.ct ? `<div class="opt-row" style="justify-content:center"><button class="toggle big on" data-act="lmatch">Khớp màu với nền</button></div><div class="hint">Tự đổi tông màu, độ sáng của ảnh ghép cho hợp với ảnh nền xung quanh</div>`
+      : sliderHTML("L:ctAmt", "Độ khớp", 0, 100, L.ctAmt) + `<div class="opt-row" style="justify-content:center;gap:10px"><button class="toggle big" data-act="lmatch">Khớp lại</button><button class="toggle big" data-act="lunmatch">Bỏ khớp</button></div><div class="hint">Di chuyển ảnh ghép xong thì bấm Khớp lại cho hợp chỗ mới</div>`;
     else if (t.id === "lstyle") h = `<div class="opt-row" style="justify-content:center;gap:10px"><button class="toggle big${L.outline ? " on" : ""}" data-lt="outline">Viền trắng</button><button class="toggle big${L.shadow ? " on" : ""}" data-lt="shadow">Bóng đổ</button></div><div class="hint">Viền trắng tạo kiểu nhãn dán · Bóng đổ giúp ảnh ghép tự nhiên hơn</div>`;
   } else if (t.type === "sticker") {
     h = `<div class="stk-grid">${SK.STICKERS.map(x => `<button class="stk" data-stk="${x.id}" title="${x.name}"><img src="${SK.stickerURL(x)}" alt="${x.name}"></button>`).join("")}${SK.EMOJIS.map(x => `<button class="stk emo" data-emo="${x}">${x}</button>`).join("")}</div><div class="hint">Chạm để dán · kéo để di chuyển · nút ↻ hoặc 2 ngón để phóng/xoay</div>`;
@@ -590,6 +623,8 @@ $("#opts").addEventListener("click", e => {
   }
   const m = e.target.closest("[data-mode]");
   if (m) { st.brushMode = m.dataset.mode; refreshOpts(); return; }
+  const actb = e.target.closest("[data-act]");
+  if (actb && actb.dataset.act !== "clearHeal") { optAction(actb.dataset.act); return; }
   if (e.target.closest("[data-act=clearHeal]")) {
     P.heals = []; const g = st.src.getContext("2d"); g.drawImage(st.origSrc, 0, 0); st.healsKey = "[]"; st.srcDirty = true;
     commit(); refreshOpts(); req(true); toast("Đã bỏ hết các chấm xoá mụn"); return;
@@ -610,9 +645,42 @@ $("#opts").addEventListener("click", e => {
   const tg = e.target.closest("[data-toggle=mask]");
   if (tg) { st.showMask = st.showMask ? 0 : maskIdFor(st.tool); refreshOpts(); req(true); }
 });
+function optAction(a) {
+  const L = selLayer();
+  if (a === "pickRef") $("#refIn").click();
+  else if (a === "clearMatch") { P.match = null; P.matchRef = null; st.refThumb = null; commit(); refreshOpts(); refreshTools(); req(true); }
+  else if (a === "lmatch" && L) {
+    // nền quanh ảnh ghép (canvas chính chỉ có ảnh nền, lớp nằm riêng)
+    syncMesh(); eng.dirty1 = true; eng.render(renderParams({ showMask: 0 }), finalView());
+    const img = LY.layerImage(L, FILTERS), { w, h } = LY.layerBox(L, img, cv.width);
+    const cx = L.x * cv.width, cy = L.y * cv.height, rw = Math.min(cv.width, w * 2.2), rh = Math.min(cv.height, h * 2.2);
+    const x0 = clamp(cx - rw / 2, 0, cv.width - rw), y0 = clamp(cy - rh / 2, 0, cv.height - rh);
+    const tr = MT.transfer(MT.stats(LY.layerSrc[L.src]), MT.stats(cv, [x0, y0, rw, rh]));
+    if (!tr) return toast("Không khớp được màu cho lớp này");
+    L.ct = tr; if (!L.ctAmt) L.ctAmt = 80; commit(); refreshOpts(); req(); toast("Đã khớp màu với nền");
+  }
+  else if (a === "lunmatch" && L) { L.ct = null; commit(); refreshOpts(); req(); }
+  else if (a === "delPreset" || a === "renPreset") {
+    const t = toolDef(st.tool); const pr = t && presets.find(x => x.id === t.pid); if (!pr) return;
+    if (a === "delPreset") { if (!confirm(`Xoá kiểu “${pr.name}”?`)) return; presets = presets.filter(x => x !== pr); st.tool = P.filter; }
+    else { const n = prompt("Tên mới cho kiểu chỉnh", pr.name); if (!n || !n.trim()) return; pr.name = n.trim().slice(0, 24); }
+    savePresets(presets); st.thumbsFor = null; buildTools(); refreshOpts(); makeThumbs();
+  }
+}
+function savePreset() {
+  const n = prompt("Đặt tên cho kiểu chỉnh này", "Kiểu " + (presets.length + 1));
+  if (n === null) return;
+  const p = {}; for (const k of PRESET_KEYS) p[k] = clone(P[k] ?? DEF[k]);
+  const pr = { id: Date.now().toString(36), name: (n.trim() || "Kiểu " + (presets.length + 1)).slice(0, 24), p };
+  presets.unshift(pr);
+  if (!savePresets(presets)) { presets.shift(); return toast("Không lưu được (trình duyệt đang chặn bộ nhớ)"); }
+  st.thumbsFor = null; buildTools(); makeThumbs();
+  toast(`Đã lưu kiểu “${pr.name}” — mở ảnh khác rồi chạm để áp dụng`, 3000);
+}
 function maskIdFor(tool) { return tool === "teethBrush" ? 1 : tool === "hair" ? 2 : tool === "skinBrush" ? 3 : 0; }
 
 function runAction(id) {
+  if (id === "savePreset") return savePreset();
   if (id === "auto") {
     Object.assign(P, { smooth: 45, whiten: 22, teeth: 45 });
     if (st.face === "ok") Object.assign(P, { slim: 35, eye: 25, nose: 15, small: 10 });
@@ -931,6 +999,12 @@ function makeThumbs() {
       R.cm = f.cm ? T3(f.cm) : null; R.cmOff = f.off || [0, 0, 0]; R.cmAmt = f.cm ? 1 : 0;
       thumbURLs[f.id] = eng.thumbnail(R, 128).toDataURL("image/jpeg", 0.8);
     }
+    const srcStats = MT.stats(st.src);
+    for (const pr of presets) {
+      const Q = Object.assign({}, P, pr.p);
+      if (Q.matchRef) Q.match = MT.transfer(srcStats, Q.matchRef);
+      thumbURLs["pre_" + pr.id] = eng.thumbnail(renderParams({ showMask: 0 }, Q), 128).toDataURL("image/jpeg", 0.8);
+    }
     applyThumbs(); req(true);
   }, 30);
 }
@@ -980,6 +1054,19 @@ $("#btnOpen").onclick = () => $("#fileIn").click();
 $("#btnCam").onclick = () => $("#camIn").click();
 $("#fileIn").onchange = e => { openFile(e.target.files[0]); e.target.value = ""; };
 $("#camIn").onchange = e => { openFile(e.target.files[0]); e.target.value = ""; };
+$("#refIn").onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+  try {
+    const img = await loadImg(URL.createObjectURL(f));
+    const c = document.createElement("canvas"); const k = Math.min(1, 96 / Math.max(img.naturalWidth, img.naturalHeight));
+    c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k); c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    st.refThumb = c.toDataURL("image/jpeg", 0.8);
+    const ref = MT.stats(img), tr = MT.transfer(MT.stats(st.src), ref);
+    if (!tr) return toast("Không đọc được màu của ảnh mẫu");
+    P.match = tr; P.matchRef = { mean: ref.mean.map(v => +v.toFixed(4)), std: ref.std.map(v => +v.toFixed(4)) }; if (!P.matchAmt) P.matchAmt = 80;
+    st.thumbsFor = null; commit(); refreshOpts(); refreshTools(); req(true); toast("Đã khớp màu theo ảnh mẫu 🎨");
+  } catch (err) { toast("Không mở được ảnh mẫu"); }
+};
 $("#layerIn").onchange = async e => {
   const f = e.target.files[0]; e.target.value = ""; if (!f) return;
   try { openCutFrom(await loadImg(URL.createObjectURL(f))); }

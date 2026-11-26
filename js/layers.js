@@ -15,6 +15,18 @@ export function addSource(canvas) {
 
 // ---------------- chỉnh màu cho lớp (cùng công thức với shader) ----------------
 function applyAdjust(d, R) {
+  if (R.ct && R.ctAmt) {
+    // khớp màu trước các chỉnh khác
+    const G = R.ct.g, O = R.ct.o, a = R.ctAmt;
+    for (let i = 0; i < d.length; i += 4) {
+      if (!d[i + 3]) continue;
+      const r = d[i] / 255, g = d[i + 1] / 255, b = d[i + 2] / 255;
+      const Y0 = 0.299 * r + 0.587 * g + 0.114 * b;
+      const Y = Y0 * G[0] + O[0], Cb = ((b - Y0) * 0.564 + 0.5) * G[1] + O[1], Cr = ((r - Y0) * 0.713 + 0.5) * G[2] + O[2];
+      const nr = Y + 1.403 * (Cr - 0.5), ng = Y - 0.344 * (Cb - 0.5) - 0.714 * (Cr - 0.5), nb = Y + 1.773 * (Cb - 0.5);
+      d[i] = clamp(r + (nr - r) * a, 0, 1) * 255; d[i + 1] = clamp(g + (ng - g) * a, 0, 1) * 255; d[i + 2] = clamp(b + (nb - b) * a, 0, 1) * 255;
+    }
+  }
   const ex = 2 ** (R.exposure || 0), ga = 2 ** (-(R.bright || 0) * 0.9), ct = 1 + (R.contrast || 0) * 0.75;
   const lut = new Float32Array(256);
   for (let i = 0; i < 256; i++) { let v = (i / 255) * ex; v = Math.pow(Math.max(v, 0), ga); lut[i] = (v - 0.5) * ct + 0.5; }
@@ -44,7 +56,7 @@ function applyAdjust(d, R) {
 const cache = new Map();
 // ảnh đã chỉnh của lớp (có lưu đệm)
 export function layerImage(L, FILTERS) {
-  const key = JSON.stringify([L.src, L.bright, L.contrast, L.sat, L.warm, L.filter, L.filterAmt, L.outline]);
+  const key = JSON.stringify([L.src, L.bright, L.contrast, L.sat, L.warm, L.filter, L.filterAmt, L.outline, L.ct, L.ctAmt]);
   const hit = cache.get(L.id);
   if (hit && hit.key === key) return hit.c;
   const src = layerSrc[L.src];
@@ -54,6 +66,7 @@ export function layerImage(L, FILTERS) {
   const R = { bright: L.bright / 100, contrast: L.contrast / 100, sat: L.sat / 100, warm: L.warm / 100 };
   for (const k in f.p) if (k !== "grain" && k !== "vig") R[k] = (R[k] || 0) + f.p[k] * a;
   if (f.cm) { R.cm = f.cm; R.cmOff = f.off; R.cmAmt = a; }
+  if (L.ct && L.ctAmt) { R.ct = L.ct; R.ctAmt = L.ctAmt / 100; }
   if (Object.values(R).some(v => v && typeof v === "number")) {
     const id = g.getImageData(0, 0, c.width, c.height); applyAdjust(id.data, R); g.putImageData(id, 0, 0);
   }
