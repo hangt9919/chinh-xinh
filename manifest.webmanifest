@@ -1,0 +1,17 @@
+{
+  "name": "Chỉnh Xinh — chỉnh ảnh & làm đẹp",
+  "short_name": "Chỉnh Xinh",
+  "description": "Chỉnh màu, làm đẹp, kéo thon, trắng răng, nhuộm tóc ngay trên điện thoại.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b0b0f",
+  "theme_color": "#0b0b0f",
+  "lang": "vi",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
