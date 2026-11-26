@@ -319,13 +319,16 @@ function drawOverlay() {
 }
 
 // ---------------- mở ảnh ----------------
+// chờ ảnh tải xong (dùng onload, chắc chắn hơn hàm decode trên một số trình duyệt)
+function loadImg(url) {
+  return new Promise((res, rej) => { const img = new Image(); img.onload = () => res(img); img.onerror = () => rej(new Error("img")); img.src = url; });
+}
 async function openFile(file) {
   if (!file) return;
   $("#busy").hidden = false;
   try {
     const url = URL.createObjectURL(file);
-    const img = new Image(); img.src = url;
-    await img.decode();
+    const img = await loadImg(url);
     loadImage(img, url);
   } catch (e) {
     console.error(e); toast("Không mở được ảnh này. Thử ảnh JPG/PNG khác nhé.");
@@ -979,7 +982,7 @@ $("#fileIn").onchange = e => { openFile(e.target.files[0]); e.target.value = "";
 $("#camIn").onchange = e => { openFile(e.target.files[0]); e.target.value = ""; };
 $("#layerIn").onchange = async e => {
   const f = e.target.files[0]; e.target.value = ""; if (!f) return;
-  try { const img = new Image(); img.src = URL.createObjectURL(f); await img.decode(); openCutFrom(img); }
+  try { openCutFrom(await loadImg(URL.createObjectURL(f))); }
   catch (err) { toast("Không mở được ảnh này"); }
 };
 $("#btnUndo").onclick = undo;
@@ -1007,4 +1010,4 @@ if (qs) {
   $("#busy").hidden = false;
   fetch(qs).then(r => r.blob()).then(b => openFile(new File([b], "test.jpg", { type: b.type }))).catch(() => { $("#busy").hidden = true; toast("Không tải được ảnh thử"); });
 }
-window.__cx = { eng, LY, SK, openCutFrom, addSticker, cutFromURL: async u => { const b = await (await fetch(u)).blob(); const img = new Image(); img.src = URL.createObjectURL(b); await img.decode(); openCutFrom(img); }, P: () => P, st, set: o => { Object.assign(P, o); refreshOpts(); refreshTools(); req(true); }, reset: () => { st.sel = null; P = clone(DEF); eng.L.fill(0); st.meshDirty = true; req(true); } };
+window.__cx = { eng, LY, SK, openCutFrom, addSticker, cutFromURL: async u => { const b = await (await fetch(u)).blob(); openCutFrom(await loadImg(URL.createObjectURL(b))); }, P: () => P, st, set: o => { Object.assign(P, o); refreshOpts(); refreshTools(); req(true); }, reset: () => { st.sel = null; P = clone(DEF); eng.L.fill(0); st.meshDirty = true; req(true); } };
