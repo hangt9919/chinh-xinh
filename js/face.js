@@ -1,8 +1,21 @@
 // Chỉnh Xinh — nhận diện khuôn mặt & tóc (MediaPipe, chạy ngay trên máy, không gửi ảnh đi đâu)
 const VER = "0.10.14";
 const BASE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${VER}`;
-const FACE_MODEL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
-const HAIR_MODEL = "https://storage.googleapis.com/mediapipe-models/image_segmenter/hair_segmenter/float32/latest/hair_segmenter.tflite";
+// model nằm sẵn trong app (thư mục models/); nếu thiếu thì lấy từ máy chủ Google
+const GCS = "https://storage.googleapis.com/mediapipe-models/";
+const local = f => new URL("../models/" + f, import.meta.url).href;
+const FACE_MODEL = [local("face_landmarker.task"), GCS + "face_landmarker/face_landmarker/float16/1/face_landmarker.task"];
+const HAIR_MODEL = [local("hair_segmenter.tflite"), GCS + "image_segmenter/hair_segmenter/float32/latest/hair_segmenter.tflite"];
+
+// tạo bộ xử lý, thử lần lượt từng nguồn model
+async function create(Task, urls, opts) {
+  let err;
+  for (const u of urls) {
+    try { return await Task.createFromOptions(fileset, { ...opts, baseOptions: { modelAssetPath: u, delegate: "CPU" } }); }
+    catch (e) { err = e; console.warn("model", u, e); }
+  }
+  throw err;
+}
 
 let vision, fileset, landmarker, hairSeg;
 async function loadVision() {
@@ -24,10 +37,7 @@ function scaled(src, maxSide) {
 export async function detectFaces(src) {
   await loadVision();
   if (!landmarker) {
-    landmarker = await vision.FaceLandmarker.createFromOptions(fileset, {
-      baseOptions: { modelAssetPath: FACE_MODEL, delegate: "CPU" },
-      runningMode: "IMAGE", numFaces: 5,
-    });
+    landmarker = await create(vision.FaceLandmarker, FACE_MODEL, { runningMode: "IMAGE", numFaces: 5 });
   }
   const r = landmarker.detect(scaled(src, 1280));
   return r.faceLandmarks || [];
@@ -37,10 +47,7 @@ export async function detectFaces(src) {
 export async function segmentHair(src) {
   await loadVision();
   if (!hairSeg) {
-    hairSeg = await vision.ImageSegmenter.createFromOptions(fileset, {
-      baseOptions: { modelAssetPath: HAIR_MODEL, delegate: "CPU" },
-      runningMode: "IMAGE", outputCategoryMask: false, outputConfidenceMasks: true,
-    });
+    hairSeg = await create(vision.ImageSegmenter, HAIR_MODEL, { runningMode: "IMAGE", outputCategoryMask: false, outputConfidenceMasks: true });
   }
   const img = scaled(src, 640);
   const r = hairSeg.segment(img);
@@ -58,8 +65,8 @@ export async function segmentHair(src) {
 }
 
 // ---------- cắt người / chạm chọn vật ----------
-const PERSON_MODEL = "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite";
-const TOUCH_MODEL = "https://storage.googleapis.com/mediapipe-models/interactive_segmenter/magic_touch/float32/latest/magic_touch.tflite";
+const PERSON_MODEL = [local("selfie_segmenter.tflite"), GCS + "image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite"];
+const TOUCH_MODEL = [local("magic_touch.tflite"), GCS + "interactive_segmenter/magic_touch/float32/latest/magic_touch.tflite"];
 let personSeg, touchSeg;
 
 function maskOut(r, pick) {
@@ -74,10 +81,7 @@ function maskOut(r, pick) {
 export async function segmentPerson(src) {
   await loadVision();
   if (!personSeg) {
-    personSeg = await vision.ImageSegmenter.createFromOptions(fileset, {
-      baseOptions: { modelAssetPath: PERSON_MODEL, delegate: "CPU" },
-      runningMode: "IMAGE", outputCategoryMask: false, outputConfidenceMasks: true,
-    });
+    personSeg = await create(vision.ImageSegmenter, PERSON_MODEL, { runningMode: "IMAGE", outputCategoryMask: false, outputConfidenceMasks: true });
   }
   return maskOut(personSeg.segment(src), ms => ms[ms.length - 1]);
 }
@@ -86,10 +90,7 @@ export async function segmentPerson(src) {
 export async function segmentAt(src, x, y) {
   await loadVision();
   if (!touchSeg) {
-    touchSeg = await vision.InteractiveSegmenter.createFromOptions(fileset, {
-      baseOptions: { modelAssetPath: TOUCH_MODEL, delegate: "CPU" },
-      outputCategoryMask: false, outputConfidenceMasks: true,
-    });
+    touchSeg = await create(vision.InteractiveSegmenter, TOUCH_MODEL, { outputCategoryMask: false, outputConfidenceMasks: true });
   }
   const roi = { keypoint: { x, y } };
   let r = touchSeg.segment(src, roi);
