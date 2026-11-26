@@ -30,6 +30,7 @@ svg.lucide { width: 22px; height: 22px; stroke-width: 1.8; }
 #stage { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: none; background: radial-gradient(circle at 50% 40%, #16161d, var(--bg) 70%); }
 #wrap { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
 #cv { display: block; width: 100%; height: 100%; box-shadow: 0 6px 30px rgba(0,0,0,.45); }
+#lyr { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 #orig { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
 #overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 
@@ -75,7 +76,7 @@ svg.lucide { width: 22px; height: 22px; stroke-width: 1.8; }
 .hint { font-size: 12px; color: var(--muted); text-align: center; }
 .hint b { color: var(--text); font-weight: 600; }
 
-input[type=range] { -webkit-appearance: none; appearance: none; flex: 1; height: 34px; background: transparent; margin: 0; touch-action: pan-x; }
+input[type=range] { --a: 0%; --b: 0%; -webkit-appearance: none; appearance: none; flex: 1; height: 34px; background: transparent; margin: 0; touch-action: pan-x; }
 input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(to right, var(--line) var(--a), var(--accent) var(--a), var(--accent) var(--b), var(--line) var(--b)); }
 input[type=range]::-moz-range-track { height: 4px; border-radius: 2px; background: linear-gradient(to right, var(--line) var(--a), var(--accent) var(--a), var(--accent) var(--b), var(--line) var(--b)); }
 input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 22px; height: 22px; margin-top: -9px; border-radius: 50%; background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.5); }
@@ -104,8 +105,9 @@ input[type=range]::-moz-range-thumb { width: 22px; height: 22px; border: 0; bord
 .tool.thumb.on .ic { box-shadow: 0 0 0 2px var(--accent); }
 .tool.ratio .ic { border-radius: 12px; font-size: 12px; font-weight: 700; }
 
-#tabs { display: flex; justify-content: space-around; border-top: 1px solid var(--line); padding: 4px 4px 6px; }
-#tabs button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 0 2px; font-size: 11.5px; color: var(--muted); }
+#tabs { display: flex; border-top: 1px solid var(--line); padding: 4px 4px 6px; overflow-x: auto; scrollbar-width: none; }
+#tabs::-webkit-scrollbar { display: none; }
+#tabs button { flex: 1 0 64px; display: flex; white-space: nowrap; flex-direction: column; align-items: center; gap: 2px; padding: 6px 0 2px; font-size: 11.5px; color: var(--muted); }
 #tabs button svg { width: 21px; height: 21px; }
 #tabs button.on { color: var(--text); }
 #tabs button.on svg { color: var(--accent); }
@@ -122,3 +124,33 @@ input[type=range]::-moz-range-thumb { width: 22px; height: 22px; border: 0; bord
 @media (min-width: 900px) {
   #panel { width: 520px; margin: 0 auto; border-radius: 18px 18px 0 0; }
 }
+
+/* ghép ảnh / nhãn dán / cọ */
+.chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding: 2px; }
+.chips::-webkit-scrollbar { display: none; }
+.chip { flex: none; padding: 7px 12px; border-radius: 16px; background: var(--chip); font-size: 12.5px; color: var(--muted); }
+.chip.on { background: rgba(255,79,139,.18); color: var(--accent); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.toggle.big { padding: 10px 18px; font-size: 13.5px; border-radius: 12px; }
+.seg.pens { overflow-x: auto; scrollbar-width: none; max-width: 100%; }
+.seg.pens::-webkit-scrollbar { display: none; }
+.seg.pens button { flex: none; }
+.stk-grid { display: grid; grid-template-rows: repeat(2, 52px); grid-auto-flow: column; grid-auto-columns: 52px; gap: 6px; overflow-x: auto; scrollbar-width: none; padding: 2px; }
+.stk-grid::-webkit-scrollbar { display: none; }
+.stk { width: 52px; height: 52px; border-radius: 12px; background: var(--chip); display: grid; place-items: center; }
+.stk img { width: 42px; height: 42px; }
+.stk.emo { font-size: 30px; line-height: 1; }
+.stk:active { transform: scale(.92); }
+
+/* màn hình cắt */
+#cutout { position: fixed; inset: 0; z-index: 20; background: var(--bg); display: flex; flex-direction: column; }
+#cutout .top b { font-size: 15px; }
+#cutStage { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: none; }
+#cutCv { position: absolute; border-radius: 6px; box-shadow: 0 6px 30px rgba(0,0,0,.5); }
+#cutOv { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+#cutHint { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); max-width: calc(100% - 32px); background: rgba(30,30,38,.92); padding: 8px 14px; border-radius: 12px; font-size: 12.5px; text-align: center; pointer-events: none; }
+#cutBusy { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; background: rgba(11,11,15,.55); color: #fff; font-size: 13px; }
+.cut-panel { background: var(--panel); border-radius: 18px 18px 0 0; padding: 12px 16px calc(12px + var(--safe-b)); display: flex; flex-direction: column; gap: 6px; }
+.cut-panel .opt-row { justify-content: space-between; }
+.cut-actions { display: flex; gap: 8px; }
+.cut-actions button { flex: 1; height: 44px; border-radius: 12px; background: var(--chip); font-size: 12.5px; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.cut-actions svg.lucide { width: 18px; height: 18px; }

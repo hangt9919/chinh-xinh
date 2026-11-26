@@ -28,7 +28,7 @@
   </header>
 
   <main id="stage">
-    <div id="wrap"><canvas id="cv"></canvas><img id="orig" alt="" hidden></div>
+    <div id="wrap"><canvas id="cv"></canvas><canvas id="lyr"></canvas><img id="orig" alt="" hidden></div>
     <canvas id="overlay"></canvas>
     <div id="cropBox" hidden>
       <div class="grid"></div>
@@ -58,6 +58,34 @@
 
 <input type="file" id="fileIn" accept="image/*" hidden>
 <input type="file" id="camIn" accept="image/*" capture="user" hidden>
+<input type="file" id="layerIn" accept="image/*" hidden>
+
+<div id="cutout" hidden>
+  <header class="top">
+    <button id="cutCancel" class="text">Huỷ</button>
+    <b>Cắt người / vật</b>
+    <button id="cutDone" class="save-btn">Xong</button>
+  </header>
+  <div id="cutStage">
+    <canvas id="cutCv"></canvas>
+    <canvas id="cutOv"></canvas>
+    <div id="cutHint" hidden></div>
+    <div id="cutBusy" hidden><div class="spin"></div><span></span></div>
+  </div>
+  <div class="cut-panel">
+    <div class="opt-row">
+      <div class="seg" id="cutMode"><button data-m="lasso">✏️ Khoanh</button><button data-m="tap" class="on">👆 Chạm</button><button data-m="add">Tô thêm</button><button data-m="erase">Xoá bớt</button></div>
+      <button class="icon-btn" id="cutUndo" aria-label="Hoàn tác" disabled><i data-lucide="undo-2"></i></button>
+    </div>
+    <div class="opt-row"><label>Cỡ cọ</label><input type="range" id="cutSize" min="6" max="90" value="30"></div>
+    <div class="opt-row"><label>Viền mềm</label><input type="range" id="cutFeather" min="0" max="12" value="3"></div>
+    <div class="cut-actions">
+      <button data-a="person"><i data-lucide="user-round"></i>Tự cắt người</button>
+      <button data-a="all"><i data-lucide="image"></i>Lấy cả ảnh</button>
+      <button data-a="clear"><i data-lucide="rotate-ccw"></i>Làm lại</button>
+    </div>
+  </div>
+</div>
 
 <div id="sheet" hidden>
   <div class="sheet-card">
